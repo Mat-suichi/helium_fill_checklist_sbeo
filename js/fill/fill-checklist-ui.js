@@ -4,7 +4,7 @@ var Core = root.FillChecklistCore, Gas = root.BalloonGas;
 var STORAGE_KEY = 'fill-checklist-v1', PREDICTOR_KEY = 'gas-calculator-settings-v4';
 var GAS_FIELDS = ['inputMode', 'balloonMassG', 'componentMassG', 'otherMassG', 'parachuteMassG', 'recoveryEquipmentMassG', 'verificationOtherMassG', 'targetAscentRate', 'temperatureC', 'pressureHpa', 'densityDifferenceKgM3', 'targetCylinderPressureMpa', 'firstCylinderOffsetMpa', 'cylinderTemperatureC', 'cylinderProcess', 'polytropicN'];
 var TEXT_FIELDS = { inputMode: true, cylinderProcess: true };
-var state, lastPlan = null, lastRequired = null, lastLift = null, editingSetup = false, lastSpokenKey = null;
+var state, lastPlan = null, lastRequired = null, lastLift = null, lastTopup = null, lastSpokenKey = null;
 
 // ---------- 小物 ----------
 function el(id) { return document.getElementById(id); }
@@ -18,13 +18,16 @@ function clock(iso) { return new Date(iso).toLocaleTimeString('ja-JP', { hour: '
 function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function toast(msg) { var t = el('fc_toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.timer); toast.timer = setTimeout(function () { t.hidden = true; }, 2600); }
 function measured(v) { return v !== '' && v != null && Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= Core.MAX_PRESSURE_MPA; }
+// 入力欄が入った部分を描き直すと、その欄の blur→change が描き直しの途中で起きる。描き直しは次の処理に回す。
+function later(fn) { setTimeout(fn, 0); }
 function storageGet(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
 function storageSet(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* 保存できなくても画面は動かす */ } }
 
 // ---------- 状態 ----------
 function emptyRunCylinder() { return { initialMpa: '', finalMpa: '', checks: {} }; }
 function emptyLift() { return { holderKg: '', withKg: '', attachedG: '0', resolutionKg: '0.1' }; }
-function emptyRun(n) { var cyl = []; for (var i = 0; i < n; i += 1) cyl.push(emptyRunCylinder()); return { started: false, current: 0, finished: false, cyl: cyl, log: [], lift: emptyLift() }; }
+function emptyTopup() { return { startMpa: '', endMpa: '', checks: {}, history: [] }; }
+function emptyRun(n) { var cyl = []; for (var i = 0; i < n; i += 1) cyl.push(emptyRunCylinder()); return { started: false, current: 0, finished: false, cyl: cyl, log: [], lift: emptyLift(), topup: emptyTopup() }; }
 function defaultGas() { var d = Gas.DEFAULTS, g = {}; GAS_FIELDS.forEach(function (k) { g[k] = d[k]; }); return g; }
 function defaultState() { return { settings: { requiredMode: 'calc', manualRequiredL: '', gas: defaultGas(), cylinders: [0, 1, 2, 3].map(function () { return { volumeL: 47, pressureMpa: 14 }; }) }, run: emptyRun(4) }; }
 function resizeRun(s) { var n = s.settings.cylinders.length; while (s.run.cyl.length < n) s.run.cyl.push(emptyRunCylinder()); if (s.run.cyl.length > n) s.run.cyl.length = n; if (s.run.current > n - 1) s.run.current = n - 1; }
@@ -44,6 +47,7 @@ function load() {
     if (saved && saved.settings && saved.run) {
         saved.settings.gas = Object.assign(defaultGas(), saved.settings.gas || {});
         saved.run.lift = Object.assign(emptyLift(), saved.run.lift || {});
+        saved.run.topup = Object.assign(emptyTopup(), saved.run.topup || {});
         if (saved.run.started == null) saved.run.started = saved.run.log.length > 0;
         state = saved;
         resizeRun(state);
@@ -71,6 +75,7 @@ function compute() {
         errorBox.textContent = err.message || String(err); errorBox.hidden = false;
     }
     try { lastLift = Core.liftCheck(gasOptions(), state.run.lift); } catch (e) { lastLift = { error: e.message || String(e) }; }
+    computeTopup();
 }
 function currentDelivered() {
     var r = state.run.cyl[state.run.current], c = state.settings.cylinders[state.run.current];
@@ -108,7 +113,7 @@ function renderStatus() {
     box.classList.remove('is-warn', 'is-done');
     el('fc_status_cyl').textContent = !state.run.started ? '充填前' : (state.run.finished ? '充填終了' : (i + 1) + '本目');
     var next = nextStep();
-    el('fc_status_next').textContent = !state.run.started ? '次: ボンベ情報を確認して「充填を始める」' : (state.run.finished ? '' : (next ? '次: ' + next.text : 'このボンベの手順はすべて完了'));
+    el('fc_status_next').textContent = !state.run.started ? '次: ① ボンベ情報を入力して「充填を始める」' : (state.run.finished ? topupNextText() : (next ? '次: ' + next.text : 'このボンベの手順はすべて完了'));
     if (!lastPlan) {
         el('fc_status_total').textContent = '用意 ' + n + '本';
         label.textContent = '目標一次圧'; target.textContent = '-';
@@ -177,33 +182,38 @@ function setupPreviewHtml() {
 }
 function renderSetup() {
     var box = el('fc_setup');
-    if (state.run.started && !editingSetup) {
-        var cyls = state.settings.cylinders.map(function (c) { return fmt(Number(c.volumeL), 0) + 'L/' + fmt(Number(c.pressureMpa), 1); }).join('・');
-        box.className = 'setup-summary';
-        box.innerHTML = '<span>ボンベ ' + state.settings.cylinders.length + '本（' + escapeHtml(cyls) + ' MPa）' + (lastPlan ? ' ・ 必要 ' + litres(lastPlan.requiredL) : '') + '</span>' +
-            '<button type="button" class="btn btn-small" data-action="edit-setup">ボンベ情報を変更</button>';
-        return;
-    }
     box.className = 'card setup-card';
-    box.innerHTML = '<h3>' + (state.run.started ? 'ボンベ情報の変更（充填中）' : 'まずボンベ情報を入力') + '</h3>' +
-        (state.run.started ? '<p class="note">使用済みのボンベは実測値で計算されるので、ここでの変更はこれから使うボンベに効きます。実測した初期圧はチェックの入力が優先です。</p>' : '<p class="note">ボンベのラベル・圧力計で容積と初期圧（一次圧）を確認して入力します。</p>') +
+    box.innerHTML = '<h3>' + (state.run.started ? 'ボンベ情報（充填中も変更できます）' : 'まずボンベ情報を入力') + '</h3>' +
+        (state.run.started ? '<p class="note">使用済みのボンベは実測した一次圧で計算されるので、ここでの変更はこれから使うボンベに効きます。実測した初期圧は ② の入力が優先です。</p>' : '<p class="note">ボンベのラベルと圧力計で、容積と初期圧（一次圧）を確認して入力します。入力すると必要ガス量とボンベごとの目標一次圧が出ます。</p>') +
         '<label class="field"><span>本数</span><select data-setup="count">' + countOptionsHtml() + '</select></label>' +
         '<div class="cyl-grid cyl-head"><span>本</span><span>容積 (L)</span><span>初期圧 (MPa)</span></div>' +
         '<div class="setup-cyls">' + cylinderRowsHtml() + '</div>' +
         '<div id="fc_setup_preview" class="setup-preview">' + setupPreviewHtml() + '</div>' +
         '<div class="setup-actions">' +
-        '<button type="button" class="btn" data-action="open-gas">機体条件・計算条件を変える</button>' +
-        (state.run.started ? '<button type="button" class="btn btn-primary btn-big" data-action="close-setup">変更を閉じる</button>' : '<button type="button" class="btn btn-primary btn-big" data-action="start">この内容で充填を始める ▶</button>') +
+        (state.run.started ? '<button type="button" class="btn btn-primary btn-big" data-action="go-check">② チェックに戻る ▶</button>' : '<button type="button" class="btn btn-primary btn-big" data-action="start">この内容で充填を始める ▶</button>') +
         '</div>';
+}
+function renderSetupSummary() {
+    var box = el('fc_setup_summary');
+    if (!state.run.started) {
+        box.className = 'card locked-card';
+        box.innerHTML = '<p>先に <b>① ボンベ情報</b> を入力して「この内容で充填を始める」を押してください。</p>' +
+            '<button type="button" class="btn btn-primary btn-big" data-action="go-gas">① ボンベ情報へ</button>';
+        return;
+    }
+    var cyls = state.settings.cylinders.map(function (c) { return fmt(Number(c.volumeL), 0) + 'L/' + fmt(Number(c.pressureMpa), 1); }).join('・');
+    box.className = 'setup-summary';
+    box.innerHTML = '<span>ボンベ ' + state.settings.cylinders.length + '本（' + escapeHtml(cyls) + ' MPa）' + (lastPlan ? ' ・ 必要 ' + litres(lastPlan.requiredL) : '') + '</span>' +
+        '<button type="button" class="btn btn-small" data-action="go-gas">ボンベ情報を変更</button>';
 }
 function onSetupInput(e) {
     var t = e.target, s = state.settings;
     if (t.dataset.cyl != null) s.cylinders[Number(t.dataset.cyl)][t.dataset.field] = t.value;
-    else if (t.dataset.setup === 'count') { setCylinderCount(Number(t.value)); refresh(); return; }
+    else if (t.dataset.setup === 'count') { if (e.type === 'change') { setCylinderCount(Number(t.value)); later(refresh); } return; }
     else return;
-    compute(); renderStatus(); renderChips(); renderPlan(); renderFocus();
+    compute(); renderStatus(); renderChips(); renderPlan(); renderFocus(); renderSetupSummary();
     var preview = el('fc_setup_preview'); if (preview) preview.innerHTML = setupPreviewHtml();
-    if (e.type === 'change') { renderSettings(); log('ボンベ情報を変更: ' + (Number(t.dataset.cyl) + 1) + '本目 ' + (t.dataset.field === 'volumeL' ? '容積 ' + t.value + ' L' : '初期圧 ' + t.value + ' MPa')); renderLog(); }
+    if (e.type === 'change') { later(renderSettings); log('ボンベ情報を変更: ' + (Number(t.dataset.cyl) + 1) + '本目 ' + (t.dataset.field === 'volumeL' ? '容積 ' + t.value + ' L' : '初期圧 ' + t.value + ' MPa')); renderLog(); }
     save();
 }
 function setCylinderCount(n) {
@@ -212,13 +222,14 @@ function setCylinderCount(n) {
     s.cylinders.length = n;
     resizeRun(state);
     renderSettings();
+    renderSetup();
 }
 function startFilling() {
     if (!lastPlan) { toast('ボンベ情報・機体条件を確認してください'); return; }
-    state.run.started = true; editingSetup = false;
+    state.run.started = true;
     log('充填開始（ボンベ ' + state.settings.cylinders.length + '本・必要 ' + litres(lastPlan.requiredL) + '）');
     refresh();
-    el('fc_focus').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    selectTab('check');
 }
 
 // ---------- ② いまの手順（1つずつ大きく） ----------
@@ -231,7 +242,7 @@ function renderFocus() {
     var head = '<div class="focus-head"><span>' + (state.run.current + 1) + '本目 ・ ' + doneCount + ' / ' + all.length + '</span>' +
         '<button type="button" class="btn btn-small" data-action="undo"' + (doneCount ? '' : ' disabled') + '>↶ 1つ戻す</button></div>';
     if (state.run.finished) {
-        box.innerHTML = head + '<p class="focus-section">充填終了</p><p class="focus-text">「浮力」で体重計による浮力測定をします。</p>' +
+        box.innerHTML = head + '<p class="focus-section">充填終了</p><p class="focus-text">「③ 浮力」で体重計による浮力測定をします。</p>' +
             '<div class="focus-actions"><button type="button" class="btn btn-primary btn-huge" data-action="go-lift">⚖ 浮力測定へ</button></div>';
         speakKey('finished', '充填終了。浮力測定をしてください。');
         return;
@@ -324,8 +335,6 @@ function renderSettings() {
     form.elements.requiredMode.value = s.requiredMode;
     form.elements.manualRequiredL.value = s.manualRequiredL;
     GAS_FIELDS.forEach(function (k) { var f = form.elements['gas.' + k]; if (f && document.activeElement !== f) f.value = s.gas[k] == null ? '' : String(s.gas[k]); });
-    form.elements.cylinderCount.innerHTML = countOptionsHtml();
-    el('fc_cyl_inputs').innerHTML = cylinderRowsHtml();
     updateModeVisibility();
 }
 function updateModeVisibility() {
@@ -336,13 +345,12 @@ function updateModeVisibility() {
 }
 function onSettingsInput(e) {
     var t = e.target, s = state.settings;
-    if (t.dataset.cyl != null) s.cylinders[Number(t.dataset.cyl)][t.dataset.field] = t.value;
-    else if (t.name === 'cylinderCount') { setCylinderCount(Number(t.value)); refresh(); return; }
-    else if (t.name && t.name.indexOf('gas.') === 0) s.gas[t.name.slice(4)] = t.value;
+    if (t.name && t.name.indexOf('gas.') === 0) s.gas[t.name.slice(4)] = t.value;
     else if (t.name) s[t.name] = t.value;
     updateModeVisibility();
     compute(); renderStatus(); renderChips(); renderPlan(); renderFocus(); renderLift();
-    if (e.type === 'change') renderSetup();
+    renderTopup();
+    if (e.type === 'change') later(function () { renderSetup(); renderSetupSummary(); });
     save();
 }
 
@@ -350,7 +358,7 @@ function onSettingsInput(e) {
 function liftResolution() { return Number(state.run.lift.resolutionKg) > 0 ? Number(state.run.lift.resolutionKg) : 0.1; }
 function renderLift() {
     var L = lastLift || {}, res = el('fc_lift_result'), tgt = el('fc_lift_target');
-    if (L.error) { tgt.textContent = ''; res.innerHTML = '<p class="fc-error">' + escapeHtml(L.error) + '（「ボンベ」パネルの機体条件を確認）</p>'; el('fc_lift_record').disabled = true; return; }
+    if (L.error) { tgt.textContent = ''; res.innerHTML = '<p class="fc-error">' + escapeHtml(L.error) + '（「① ボンベ」の機体条件を確認）</p>'; el('fc_lift_record').disabled = true; return; }
     tgt.innerHTML = '目標: ②が①より <strong>' + kg(L.targetPullKg) + '</strong> 軽くなれば上昇速度 ' + rate(L.targetAscentRate) + '（総重量 ' + kg(L.totalMassKg) + '・気球 ' + kg(L.balloonKg) + '）';
     el('fc_lift_record').disabled = !L.measured;
     if (!L.measured) { res.innerHTML = ''; return; }
@@ -369,9 +377,137 @@ function renderLift() {
     res.innerHTML = html + '<p class="fc-lift-advice ' + cls + '">' + advice + '</p>';
 }
 function onLiftInput(e) {
-    var t = e.target; if (!t.dataset.lift) return;
-    state.run.lift[t.dataset.lift] = t.value;
-    compute(); renderLift(); renderStatus(); renderChips(); save();
+    var t = e.target;
+    if (t.dataset.lift) { state.run.lift[t.dataset.lift] = t.value; compute(); renderLift(); renderTopup(); renderStatus(); renderChips(); save(); return; }
+    if (t.dataset.topupPressure) {
+        state.run.topup[t.dataset.topupPressure] = t.value;
+        computeTopup(); renderStatus(); renderChips(); save();
+        if (e.type === 'change') later(renderTopup); else updateTopupLive();
+        return;
+    }
+    if (t.dataset.topupStep && e.type === 'change') {
+        var c = state.run.topup.checks, step = TOPUP_STEPS.find(function (x) { return x.id === t.dataset.topupStep; });
+        if (t.checked) { c[step.id] = nowIso(); log('追加充填 ✓ ' + step.label); } else { delete c[step.id]; log('追加充填 ✗ 取り消し: ' + step.label); }
+        save(); later(function () { renderTopup(); renderLog(); });
+    }
+}
+
+// ---------- 追加充填（浮力測定のあと、目標の上昇速度に近づける） ----------
+var TOPUP_STEPS = [
+    { id: 't1', label: 'バルーンにホースを締結', text: 'バルーンの口をほどき、ホースの先端を上に向けたまま、タイラップでバルーンに締結する' },
+    { id: 't2', label: 'レギュレータ取り付け', text: '{cyl}のボンベにレギュレータを取り付ける（元栓が閉まっている・ネジ山の清掃・パッキンあり・各バルブが閉まっている、を確認）' },
+    { id: 't3', label: '開栓・一次圧入力', text: '開栓許可を得て周りに知らせ、元栓を1秒に5°ほどで開ける。一次圧の針が止まったら入力する', input: 'startMpa' },
+    { id: 't4', label: '二次圧調整', text: '圧力調整ハンドルで二次圧を 0.5 MPa に調整する（MAX 0.8 MPa）' },
+    { id: 't5', label: '追加充填', text: '充填許可を得て、出口バルブをゆっくり開ける。一次圧が目標まで下がったら出口バルブを閉め、直後の一次圧を入力する', input: 'endMpa', target: true },
+    { id: 't6', label: '脱圧・取り外し', text: '元栓を閉め、出口バルブを開けて一次圧・二次圧がどちらも 0 になったら閉める。圧力調整ハンドルを緩めてレギュレータを外す' },
+    { id: 't7', label: '口を縛る', text: 'バルーンの口を縛り、ホースを外す' },
+    { id: 't8', label: '再測定', text: 'もう一度体重計で浮力を測る（上の ② 気球を持った状態の体重を入れ直す）' }
+];
+function cylinderPressureNow(i) {
+    var hist = state.run.topup.history.filter(function (h) { return h.cyl === i; });
+    if (hist.length) return Number(hist[hist.length - 1].endMpa);
+    var r = state.run.cyl[i] || {};
+    if (measured(r.finalMpa)) return Number(r.finalMpa);
+    if (measured(r.initialMpa)) return Number(r.initialMpa);
+    return Number(state.settings.cylinders[i].pressureMpa);
+}
+function topupCandidates() {
+    var n = state.settings.cylinders.length, cur = state.run.current, order = [cur], i;
+    for (i = cur + 1; i < n; i += 1) order.push(i);
+    for (i = cur - 1; i >= 0; i -= 1) order.push(i);
+    return order.map(function (k) { return { index: k, volumeL: Number(state.settings.cylinders[k].volumeL), pressureMpa: cylinderPressureNow(k) }; });
+}
+function computeTopup() {
+    lastTopup = null;
+    var L = lastLift;
+    if (!L || !L.measured || L.error || !(L.deltaPullKg > liftResolution())) return null;
+    try {
+        var o = gasOptions(), cands = topupCandidates(), plan = Core.topupPlan(o, L.gasAdjustL, cands);
+        var t = state.run.topup;
+        if (plan.rows.length && measured(t.startMpa)) {
+            // 実際に開栓して読んだ一次圧で目標を出し直す
+            var first = plan.rows[0].index;
+            cands.forEach(function (c) { if (c.index === first) c.pressureMpa = Number(t.startMpa); });
+            plan = Core.topupPlan(o, L.gasAdjustL, cands);
+        }
+        var addedL = 0;
+        if (plan.rows.length && measured(t.startMpa) && measured(t.endMpa)) addedL = Core.deliveredL(Object.assign({}, o, { firstCylinderOffsetMpa: 0 }), plan.rows[0].volumeL, 1, Number(t.startMpa), Number(t.endMpa));
+        lastTopup = Object.assign(plan, { addedL: addedL });
+    } catch (e) { lastTopup = { error: e.message || String(e), rows: [] }; }
+    return lastTopup;
+}
+function topupNextText() {
+    var L = lastLift;
+    if (!L || !L.measured) return '次: ③ 浮力を測る';
+    if (lastTopup && lastTopup.rows && lastTopup.rows.length) { var r = lastTopup.rows[0]; return '次: 追加充填 約 ' + litres(L.gasAdjustL) + '（' + (r.index + 1) + '本目を ' + mpa(r.targetMpa) + ' まで）'; }
+    if (L.deltaPullKg < -liftResolution()) return '浮力が目標より多い（③ を参照）';
+    return '目標どおり。放球準備へ';
+}
+function updateTopupLive() {
+    var done = el('fc_topup_added'), t = state.run.topup;
+    if (done) done.textContent = lastTopup && lastTopup.addedL > 0 ? '→ 入った量 約 ' + litres(lastTopup.addedL) : '';
+    document.querySelectorAll('#fc_topup [data-topup-step]').forEach(function (b) {
+        var step = TOPUP_STEPS.find(function (x) { return x.id === b.dataset.topupStep; });
+        if (step.input && !b.checked) b.disabled = !measured(t[step.input]);
+    });
+    var target = el('fc_topup_target');
+    if (target && lastTopup && lastTopup.rows.length) target.textContent = mpa(lastTopup.rows[0].targetMpa);
+    var rec = document.querySelector('#fc_topup [data-action="topup-record"]');
+    if (rec) rec.disabled = !measured(t.endMpa);
+}
+function renderTopup() {
+    var box = el('fc_topup'), L = lastLift, t = state.run.topup;
+    computeTopup();
+    var history = t.history.length ? '<p class="note">これまでの追加充填: ' + t.history.map(function (h) { return (h.cyl + 1) + '本目 ' + fmt(h.startMpa, 2) + '→' + fmt(h.endMpa, 2) + ' MPa（約 ' + litres(h.addedL) + '）'; }).join('、') + '</p>' : '';
+    if (!L || !L.measured || L.error) { box.innerHTML = history; return; }
+    if (Math.abs(L.deltaPullKg) <= liftResolution()) {
+        box.innerHTML = '<div class="card topup-card is-ok"><h3>追加充填</h3><p>目標の上昇速度 ' + rate(L.targetAscentRate) + ' になっています（差は体重計の目盛り以内）。追加充填は不要です。</p>' + history + '</div>';
+        return;
+    }
+    if (L.deltaPullKg < 0) {
+        box.innerHTML = '<div class="card topup-card"><h3>浮力が目標より多い</h3>' +
+            '<p>目標より約 <b>' + kg(-L.deltaPullKg) + '</b>（ヘリウム約 ' + litres(-L.gasAdjustL) + '）多く、このままだと想定上昇速度は <b>' + (L.canFly ? rate(L.ascentRate) : '-') + '</b>（目標 ' + rate(L.targetAscentRate) + '）です。</p>' +
+            '<ol class="topup-steps plain"><li>このまま放球してよいか判断する（上昇が速いと破裂高度・飛行時間が変わります）。</li>' +
+            '<li>下げる場合は、バルーンの口をほどき、口を少しだけ開けてガスを少しずつ抜く。</li>' +
+            '<li>口を縛り、もう一度浮力を測る（上の ② を入れ直す）。目標との差が目盛り以内になるまで繰り返す。</li></ol>' + history + '</div>';
+        return;
+    }
+    var P = lastTopup;
+    if (!P || P.error) { box.innerHTML = '<p class="fc-error">' + escapeHtml(P && P.error || '追加充填を計算できません') + '</p>'; return; }
+    var first = P.rows[0];
+    var head = '<div class="card topup-card"><h3>目標の上昇速度 ' + rate(L.targetAscentRate) + ' にするための追加充填</h3>' +
+        '<p class="topup-need">あと約 <b>' + kg(L.deltaPullKg) + '</b> の浮力 ＝ ヘリウム約 <b>' + litres(L.gasAdjustL) + '</b></p>';
+    if (!first) { box.innerHTML = head + '<p class="fc-error">一次圧が終了目標（' + mpa(Number(state.settings.gas.targetCylinderPressureMpa)) + '）より高いボンベが残っていません。① でボンベを追加してください。</p>' + history + '</div>'; return; }
+    var plan = '<ul class="topup-plan">' + P.rows.map(function (r, k) { return '<li><b>' + (r.index + 1) + '本目</b>：一次圧 ' + mpa(r.startMpa) + (k === 0 && measured(t.startMpa) ? '（実測）' : '（今の値）') + ' → <b>' + (k === 0 ? '<span id="fc_topup_target">' + mpa(r.targetMpa) + '</span>' : mpa(r.targetMpa)) + '</b> まで（約 ' + litres(r.useL) + '）</li>'; }).join('') + '</ul>';
+    var notes = '';
+    if (P.insufficient) notes += '<p class="fc-error">残りのボンベをすべて使っても約 ' + litres(P.shortfallL) + ' 足りません。</p>';
+    if (P.rows.length > 1) notes += '<p class="note">1本では足りません。' + (first.index + 1) + '本目を目標まで使ったら、同じ手順で ' + (P.rows[1].index + 1) + '本目を ' + mpa(P.rows[1].targetMpa) + ' まで入れます。</p>';
+    if (first.dropMpa < 0.5) notes += '<p class="note warn">一次圧の変化が約 ' + fmt(first.dropMpa, 2) + ' MPa と小さく、圧力計では読みにくい量です。出口バルブを少しだけ開けて短時間ずつ入れ、口を縛って浮力を測り直すのを繰り返すと確実です。</p>';
+    var c = t.checks, next = TOPUP_STEPS.find(function (st) { return !c[st.id]; });
+    var steps = '<ol class="topup-steps">' + TOPUP_STEPS.map(function (st) {
+        var done = !!c[st.id], dis = st.input && !measured(t[st.input]) && !done ? ' disabled' : '';
+        var text = escapeHtml(st.text.replace('{cyl}', (first.index + 1) + '本目'));
+        var extra = '';
+        if (st.target) extra += '<span class="topup-target">目標 一次圧 <b>' + mpa(first.targetMpa) + '</b></span>';
+        if (st.input) extra += '<span class="fc-step-input"><input type="number" step="0.01" min="0" max="15" inputmode="decimal" data-topup-pressure="' + st.input + '" value="' + escapeHtml(t[st.input]) + '" aria-label="' + (st.input === 'startMpa' ? '追加充填の開始一次圧' : '追加充填の終了一次圧') + ' (MPa)"> MPa' + (st.input === 'endMpa' ? ' <span id="fc_topup_added" class="topup-added">' + (P.addedL > 0 ? '→ 入った量 約 ' + litres(P.addedL) : '') + '</span>' : '') + '</span>';
+        if (done) extra += '<span class="fc-step-meta">' + clock(c[st.id]) + ' 確認</span>';
+        return '<li class="fc-step' + (done ? ' is-done' : '') + (next && next.id === st.id ? ' is-next' : '') + '"><input type="checkbox" id="topup_' + st.id + '" data-topup-step="' + st.id + '"' + (done ? ' checked' : '') + dis + '><div class="fc-step-body"><label class="fc-step-text" for="topup_' + st.id + '">' + text + '</label>' + extra + '</div></li>';
+    }).join('') + '</ol>';
+    box.innerHTML = head + plan + notes + '<h3>追加充填の手順</h3>' + steps +
+        '<div class="setup-actions"><button type="button" class="btn btn-primary btn-big" data-action="topup-record"' + (measured(t.endMpa) ? '' : ' disabled') + '>追加充填を記録して再測定へ</button></div>' + history + '</div>';
+}
+function recordTopup() {
+    var t = state.run.topup, P = lastTopup;
+    if (!P || !P.rows.length || !measured(t.endMpa)) return;
+    var cyl = P.rows[0].index, start = measured(t.startMpa) ? Number(t.startMpa) : P.rows[0].startMpa;
+    t.history.push({ cyl: cyl, startMpa: start, endMpa: Number(t.endMpa), addedL: P.addedL });
+    log('追加充填: ' + (cyl + 1) + '本目 一次圧 ' + mpa(start) + ' → ' + mpa(Number(t.endMpa)) + '（約 ' + litres(P.addedL) + '）');
+    t.startMpa = ''; t.endMpa = ''; t.checks = {};
+    state.run.lift.withKg = '';
+    renderLiftInputs(); refresh();
+    var input = document.querySelector('[data-lift="withKg"]');
+    if (input) { input.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    toast('追加充填を記録しました。② 気球を持った状態の体重を測り直してください');
 }
 function recordLift() {
     var L = lastLift; if (!L || !L.measured) return;
@@ -414,11 +550,11 @@ function toggleSpeech() {
 }
 
 // ---------- 操作 ----------
-function refresh() { compute(); renderStatus(); renderChips(); renderSetup(); renderFocus(); renderSteps(); renderPlan(); renderLift(); renderLog(); save(); }
+function refresh() { compute(); renderStatus(); renderChips(); renderSetup(); renderSetupSummary(); renderFocus(); renderSteps(); renderPlan(); renderLift(); renderTopup(); renderLog(); save(); }
 function onStepsChange(e) {
     var t = e.target;
-    if (t.dataset.step) { setCheck(Core.STEPS.find(function (x) { return x.id === t.dataset.step; }), t.checked); refresh(); return; }
-    if (t.dataset.pressure) { setPressure(t.dataset.pressure, t.value); refresh(); }
+    if (t.dataset.step) { setCheck(Core.STEPS.find(function (x) { return x.id === t.dataset.step; }), t.checked); later(refresh); return; }
+    if (t.dataset.pressure) { setPressure(t.dataset.pressure, t.value); later(refresh); }
 }
 function onPressureTyping(e) {
     var t = e.target; if (!t.dataset.pressure) return;
@@ -466,8 +602,8 @@ function toggleFinish() {
 }
 function resetRun() {
     if (!root.confirm('チェックと記録をすべて消して最初からやり直します（ボンベ情報・機体条件は残ります）。よろしいですか？')) return;
-    state.run = emptyRun(state.settings.cylinders.length); editingSetup = false; lastSpokenKey = null;
-    renderLiftInputs(); selectTab('check'); refresh(); toast('最初からやり直します');
+    state.run = emptyRun(state.settings.cylinders.length); lastSpokenKey = null;
+    renderLiftInputs(); selectTab('gas'); refresh(); toast('最初からやり直します');
 }
 function importPredictor() {
     var p = predictorSettings();
@@ -484,9 +620,9 @@ function onAction(e) {
     var b = e.target.closest('[data-action]'); if (!b || b.disabled) return;
     var a = b.dataset.action;
     if (a === 'start') startFilling();
-    else if (a === 'edit-setup') { editingSetup = true; renderSetup(); }
-    else if (a === 'close-setup') { editingSetup = false; refresh(); }
-    else if (a === 'open-gas') selectTab('gas');
+    else if (a === 'go-gas') selectTab('gas');
+    else if (a === 'go-check') selectTab('check');
+    else if (a === 'topup-record') recordTopup();
     else if (a === 'complete') completeStep(b.dataset.step);
     else if (a === 'undo') undoStep();
     else if (a === 'next') goNext();
@@ -505,7 +641,7 @@ function init() {
     load();
     document.querySelectorAll('.rail-btn[data-tab]').forEach(function (b) { b.addEventListener('click', function () { selectTab(b.dataset.tab); }); });
     var savedTab = storageGet(STORAGE_KEY + '-tab');
-    if (savedTab && el('fc_tab_' + savedTab)) selectTab(savedTab);
+    selectTab(!state.run.started ? 'gas' : (savedTab && el('fc_tab_' + savedTab) ? savedTab : 'check'));
     document.addEventListener('click', onAction);
     el('fc_setup').addEventListener('input', onSetupInput);
     el('fc_setup').addEventListener('change', onSetupInput);
@@ -526,6 +662,7 @@ function init() {
     el('fc_download_log').addEventListener('click', downloadCsv);
     el('fc_speak').addEventListener('click', toggleSpeech);
     el('fc_lift').addEventListener('input', onLiftInput);
+    el('fc_lift').addEventListener('change', onLiftInput);
     el('fc_lift_record').addEventListener('click', recordLift);
     document.addEventListener('visibilitychange', keepAwake);
     renderSettings(); renderLiftInputs(); renderSpeakButton(); refresh(); keepAwake(); registerOffline();

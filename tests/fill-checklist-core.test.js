@@ -87,3 +87,23 @@ test('attached items and low lift are handled', () => {
     assert.equal(low.ascentRate, 0);
     assert.ok(low.deltaPullKg > 0 && low.gasAdjustL > 0);
 });
+
+test('top-up plan gives the primary pressure to stop at for the missing gas', () => {
+    const o = options();
+    const lift = core.liftCheck(o, { holderKg: 62.4, withKg: 57.8 });
+    assert.ok(lift.deltaPullKg > 0 && lift.gasAdjustL > 0);
+    const plan = core.topupPlan(o, lift.gasAdjustL, [{ index: 1, volumeL: 47, pressureMpa: 13.1 }, { index: 2, volumeL: 47, pressureMpa: 14 }]);
+    assert.equal(plan.rows.length, 1);
+    assert.equal(plan.rows[0].index, 1);
+    assert.ok(plan.rows[0].targetMpa < 13.1 && plan.rows[0].targetMpa > 12);
+    close(core.deliveredL(Object.assign({}, o, { firstCylinderOffsetMpa: 0 }), 47, 1, 13.1, plan.rows[0].targetMpa), lift.gasAdjustL, 15, 'delivered matches request');
+});
+
+test('top-up skips empty cylinders and reports shortfall', () => {
+    const o = options();
+    const plan = core.topupPlan(o, 500, [{ index: 0, volumeL: 47, pressureMpa: 0.2 }, { index: 1, volumeL: 47, pressureMpa: 1.0 }]);
+    assert.equal(plan.rows[0].index, 1);
+    assert.equal(plan.insufficient, true);
+    assert.ok(plan.shortfallL > 0);
+    assert.equal(core.topupPlan(o, 100, [{ index: 0, volumeL: 47, pressureMpa: 0.2 }]).insufficient, true);
+});

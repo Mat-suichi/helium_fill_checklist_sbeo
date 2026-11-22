@@ -213,3 +213,32 @@ table.grid tr.is-done td { color: var(--muted); }
     .fc-step-text { font-size: 15px; }
     .rail-btn { padding: 12px 2px; font-size: 11px; }
 }
+
+/* ---- ① の詳細条件・② のロック表示 ---- */
+.settings-more { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; background: var(--panel-2); }
+.settings-more > summary { cursor: pointer; padding: 12px 0; color: var(--muted); }
+.settings-more[open] { padding-bottom: 12px; }
+.settings-more .settings { max-width: none; }
+.locked-card { border-color: var(--accent); }
+.locked-card p { margin: 0 0 10px; font-size: 15px; }
+.locked-card b { color: var(--accent); }
+
+/* ---- ③ 追加充填 ---- */
+.lift-record { display: flex; justify-content: flex-end; margin: 10px 0; }
+.topup-card { border-color: var(--accent); margin-top: 14px; }
+.topup-card.is-ok { border-color: var(--ok); }
+.topup-card h3 { margin: 0 0 8px; color: var(--accent); }
+.topup-card.is-ok h3 { color: var(--ok); }
+.topup-card > h3 ~ h3 { margin-top: 16px; color: var(--muted); }
+.topup-need { margin: 0 0 6px; font-size: 15px; }
+.topup-need b { color: var(--accent); font-size: 18px; font-variant-numeric: tabular-nums; }
+.topup-plan { margin: 4px 0 8px; padding-left: 1.4em; line-height: 1.8; font-variant-numeric: tabular-nums; }
+.topup-plan b { color: var(--accent); }
+.topup-steps { list-style: none; margin: 0; padding: 0; counter-reset: topup; }
+.topup-steps.plain { list-style: decimal; padding-left: 1.4em; line-height: 1.7; }
+.topup-target { display: block; margin-top: 4px; color: var(--muted); }
+.topup-target b { color: var(--accent); font-size: 20px; font-variant-numeric: tabular-nums; }
+.topup-added { color: var(--ok); font-weight: 600; }
+
+.topup-card h3, .setup-card h3, .locked-card h3 { text-transform: none; letter-spacing: .02em; }
+.rail-btn span:last-child { white-space: nowrap; }

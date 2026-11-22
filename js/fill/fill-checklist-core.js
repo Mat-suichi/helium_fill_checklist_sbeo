@@ -115,5 +115,17 @@ var deltaKg=targetPullKg-c.pullKg,gasL=gas.calculateGasVolumeL(Math.abs(deltaKg)
 return Object.assign(out,c,{measured:true,rateLow:lo.ascentRate,rateHigh:hi.ascentRate,deltaPullKg:deltaKg,gasAdjustL:deltaKg>=0?gasL:-gasL,canFly:c.pureLiftKg>0});
 }
 
-return{STEPS:STEPS,ascentRate:ascentRate,liftCheck:liftCheck,SECTIONS:SECTIONS,MAX_CYLINDERS:MAX_CYLINDERS,MAX_PRESSURE_MPA:MAX_PRESSURE_MPA,stepsFor:stepsFor,deliveredL:deliveredL,buildPlan:buildPlan,requiredGas:requiredGas};
+// 浮力測定のあとの追加充填。addL [L] を、残っているボンベ（今の一次圧）から入れるときの目標一次圧。
+// candidates: [{index, volumeL, pressureMpa(今の一次圧)}] を使う順に並べたもの。
+// 1本目オフセットは充填開始時の補正なので、追加充填では使わない。
+function topupPlan(o,addL,candidates){
+var end=Number(o.targetCylinderPressureMpa),usable=candidates.filter(function(c){return Number(c.pressureMpa)>end&&Number(c.volumeL)>0;});
+if(!(addL>0)||!usable.length)return{addL:addL,rows:[],shortfallL:addL>0?addL:0,insufficient:addL>0};
+var o2=Object.assign({},o,{firstCylinderOffsetMpa:0});
+var plan=buildPlan(o2,addL,usable.map(function(c){return{volumeL:Number(c.volumeL),pressureMpa:Number(c.pressureMpa)};}),0);
+var rows=plan.rows.filter(function(r){return r.role==='full'||r.role==='partial';}).map(function(r,i){var c=usable[r.index];return{index:c.index,volumeL:c.volumeL,startMpa:Number(c.pressureMpa),targetMpa:r.targetMpa,useL:r.useL,dropMpa:Number(c.pressureMpa)-r.targetMpa};});
+return{addL:addL,rows:rows,shortfallL:plan.shortfallL,insufficient:plan.insufficient};
+}
+
+return{STEPS:STEPS,ascentRate:ascentRate,liftCheck:liftCheck,topupPlan:topupPlan,SECTIONS:SECTIONS,MAX_CYLINDERS:MAX_CYLINDERS,MAX_PRESSURE_MPA:MAX_PRESSURE_MPA,stepsFor:stepsFor,deliveredL:deliveredL,buildPlan:buildPlan,requiredGas:requiredGas};
 }));
