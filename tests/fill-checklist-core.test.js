@@ -7,12 +7,40 @@ const options = () => Object.assign({}, gas.DEFAULTS);
 const cylinders = (n) => Array.from({ length: n }, () => ({ volumeL: 47, pressureMpa: 14 }));
 function close(actual, expected, tolerance, label) { assert.ok(Math.abs(actual - expected) <= tolerance, `${label}: ${actual} != ${expected}`); }
 
-test('second and later cylinders skip hose purge and balloon tie steps', () => {
-    const first = core.stepsFor(0).map((s) => s.id);
-    const second = core.stepsFor(1).map((s) => s.id);
-    assert.ok(first.includes('a1') && first.includes('b13') && first.includes('c1'));
-    assert.ok(!second.some((id) => /^a/.test(id)) && !second.includes('b13') && !second.includes('c1'));
-    assert.ok(second.includes('c2') && second.includes('d4'));
+test('timeline follows the 2026 sequence sheet from arrival to release', () => {
+    const tl = core.timeline(1);
+    const keys = tl.map((t) => t.key);
+    const order = ['day-1', 'A-1', 'B-4', 'C-1', 'C-13', '1:D-1', '1:D-8', '2:N-6', '2:D-8', 'F-2', 'G-1', 'H-6'];
+    order.reduce((prev, k) => { const i = keys.indexOf(k); assert.ok(i > prev, `${k} order`); return i; }, -1);
+    assert.equal(new Set(keys).size, keys.length, 'keys are unique');
+});
+
+test('cylinder sections: first ties the hose, later ones reconnect, only the last keeps the regulator', () => {
+    const tl = core.timeline(2);
+    const of = (n) => tl.filter((t) => t.cyl === n).map((t) => t.step.id);
+    assert.ok(of(0).includes('D-1') && of(0).includes('D-6') && !of(0).includes('N-6'));
+    assert.ok(of(1).includes('N-6') && !of(1).includes('D-1') && !of(1).includes('D-6'));
+    assert.ok(of(0).includes('D-11') && of(1).includes('D-11') && !of(0).includes('E-3'));
+    assert.ok(!of(2).includes('D-11') && of(2).includes('E-3'));
+    assert.deepEqual(core.groups(2).map((g) => g.id), ['day', 'A', 'B', 'C', 'D1', 'D2', 'D3', 'F', 'G', 'H']);
+});
+
+test('last cylinder index comes from the plan', () => {
+    const o = options();
+    const required = gas.calculate(o).gasVolumeL;
+    const plan = core.buildPlan(o, required, cylinders(4), 0);
+    assert.equal(core.lastCylinderIndex(plan, 4), 1);
+    assert.equal(core.lastCylinderIndex(core.buildPlan(o, 1000, cylinders(4), 0), 4), 0);
+});
+
+test('lift check reports the ±5% difference from the calculated gross lift', () => {
+    const o = options();
+    const target = core.liftCheck(o, {});
+    const exact = core.liftCheck(o, { holderKg: 60, withKg: 60 - target.targetPullKg });
+    close(exact.errorPct, 0, 1e-9, 'exact');
+    assert.equal(exact.withinTolerance, true);
+    const low = core.liftCheck(o, { holderKg: 60, withKg: 60 - target.targetPullKg + 0.5 });
+    assert.ok(low.errorPct < -5 && low.withinTolerance === false);
 });
 
 test('initial plan matches the existing gas calculator targets', () => {
@@ -106,4 +134,18 @@ test('top-up skips empty cylinders and reports shortfall', () => {
     assert.equal(plan.insufficient, true);
     assert.ok(plan.shortfallL > 0);
     assert.equal(core.topupPlan(o, 100, [{ index: 0, volumeL: 47, pressureMpa: 0.2 }]).insufficient, true);
+});
+
+test('stopping exactly at the rounded target does not pull in another cylinder', () => {
+    const o = options();
+    const required = gas.calculate(o).gasVolumeL;
+    const cyl = cylinders(3);
+    cyl[1].pressureMpa = 13.5;
+    const first = core.buildPlan(o, required, cyl, 0);
+    cyl[0].initialMpa = 14; cyl[0].finalMpa = first.rows[0].targetMpa;
+    cyl[1].initialMpa = 13.5; cyl[1].finalMpa = first.rows[1].targetMpa;
+    const after = core.buildPlan(o, required, cyl, 2);
+    assert.ok(after.remainingL > 0, 'a few litres remain from rounding');
+    assert.equal(after.rows[2].role, 'unused');
+    assert.equal(core.lastCylinderIndex(after, 3), 1);
 });

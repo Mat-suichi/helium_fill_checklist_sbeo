@@ -242,3 +242,37 @@ table.grid tr.is-done td { color: var(--muted); }
 
 .topup-card h3, .setup-card h3, .locked-card h3 { text-transform: none; letter-spacing: .02em; }
 .rail-btn span:last-child { white-space: nowrap; }
+
+/* ---- ② タイムライン ---- */
+.groupbar { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 10px; margin-bottom: 6px; scrollbar-width: thin; }
+.gchip { flex: none; display: flex; flex-direction: column; align-items: center; min-width: 52px; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); color: var(--muted); cursor: pointer; }
+.gchip b { color: var(--text); font-size: 14px; }
+.gchip span { font-size: 10px; font-variant-numeric: tabular-nums; }
+.gchip.is-done { border-color: var(--ok); }
+.gchip.is-done b { color: var(--ok); }
+.gchip.is-current { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+.gchip.is-current b { color: var(--accent-ink); }
+.tl-caption { margin-top: 16px; }
+.timeline { position: relative; max-height: 70vh; overflow-y: auto; padding-right: 4px; border-top: 1px solid var(--line); -webkit-overflow-scrolling: touch; }
+.tl-group { padding-top: 6px; }
+.tl-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; padding: 8px 2px; background: var(--panel); border-bottom: 1px solid var(--line); margin-bottom: 6px; }
+.tl-code { min-width: 2.4em; padding: 2px 6px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); color: var(--accent); font-weight: 700; text-align: center; }
+.tl-title { flex: 1; font-weight: 600; }
+.tl-count { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.tl-head .btn-small { margin: 0; }
+.code { display: inline-block; margin-right: 6px; padding: 0 5px; border-radius: 5px; background: var(--bg); border: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 600; vertical-align: 1px; }
+.fc-step-note { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.fc-step.is-skipped { opacity: .5; border-style: dashed; }
+.focus-section .code { color: var(--accent); }
+.focus-note { margin: 6px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.lift-judge { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); font-size: 15px; }
+.lift-judge b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.lift-judge.is-ok b { color: var(--ok); }
+.lift-judge.is-warn b { color: var(--accent); }
+.ok-text { color: var(--ok); font-weight: 600; }
+
+/* ① の5列（本・容積・初期圧・実測開始・実測終了） */
+.cyl-grid.cyl5 { grid-template-columns: 2em repeat(4, minmax(0, 1fr)); }
+.cyl-grid.cyl5 input { padding: 8px 6px; }
+.start-pick { display: grid; gap: 4px; }
+.setup-plan li.is-done { color: var(--muted); }

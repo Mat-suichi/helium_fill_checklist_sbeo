@@ -36,7 +36,7 @@
 
     <nav class="rail" aria-label="パネル">
         <button type="button" class="rail-btn active" data-tab="gas" title="① ボンベ情報と必要ガス量"><span class="rail-icon">①</span><span>ボンベ</span></button>
-        <button type="button" class="rail-btn" data-tab="check" title="② 充填手順のチェック"><span class="rail-icon">②</span><span>チェック</span></button>
+        <button type="button" class="rail-btn" data-tab="check" title="② 全シーケンスのタイムライン"><span class="rail-icon">②</span><span>手順</span></button>
         <button type="button" class="rail-btn" data-tab="lift" title="③ 体重計による浮力測定と追加充填"><span class="rail-icon">③</span><span>浮力</span></button>
         <button type="button" class="rail-btn" data-tab="log" title="記録"><span class="rail-icon">☰</span><span>記録</span></button>
     </nav>
@@ -62,18 +62,12 @@
 
             <div class="panels">
                 <section id="fc_tab_check" class="panel" hidden>
-                    <h2>② 充填チェック</h2>
+                    <h2>② タイムライン（全シーケンス 2026）</h2>
                     <div id="fc_setup_summary"></div>
+                    <nav id="fc_groupbar" class="groupbar" aria-label="節へ移動"></nav>
                     <div id="fc_focus" class="focus-card" aria-live="polite" hidden></div>
-                    <details id="fc_list" class="step-list" hidden>
-                        <summary>全手順の一覧（ここからもチェック・取り消しできます）</summary>
-                        <div id="fc_steps"></div>
-                    </details>
-                    <div class="panel-actions" id="fc_check_actions" hidden>
-                        <button type="button" id="fc_prev_cyl" class="btn">前のボンベに戻る</button>
-                        <button type="button" id="fc_finish" class="btn">充填を終了</button>
-                        <button type="button" id="fc_next_cyl" class="btn btn-primary">▶ 次のボンベへ</button>
-                    </div>
+                    <h3 class="tl-caption">全手順（押すとチェック・節の「ここから開始」で開始位置を変更）</h3>
+                    <div id="fc_steps" class="timeline"></div>
                 </section>
 
                 <section id="fc_tab_gas" class="panel">
@@ -127,13 +121,13 @@
                 <section id="fc_tab_lift" class="panel" hidden>
                     <h2>③ 浮力測定（体重計）</h2>
                     <div id="fc_lift">
-                        <p class="note">充填が終わりバルーンの口を縛ったあと、同じ体重計・同じ人で続けて測ります。風を避け、気球は真上に引かせてください。</p>
+                        <p class="note">全シーケンス表 F-1・F-2：最後のボンベを脱圧したら（レギュレータは付けたまま）、<b>ホースが入った状態</b>の気球を持って測ります。同じ体重計・同じ人で続けて測り、風を避け、気球は真上に引かせてください。② タイムラインの F-1・F-2 と同じ値です。</p>
                         <div class="card"><p id="fc_lift_target" class="lift-target"></p></div>
                         <label class="field field-big"><span>① 保持者の体重 (kg)</span><input data-lift="holderKg" type="number" min="0" step="0.05" inputmode="decimal"></label>
                         <label class="field field-big"><span>② 気球を持った状態 (kg)</span><input data-lift="withKg" type="number" min="0" step="0.05" inputmode="decimal"></label>
                         <label class="field"><span>一緒に持っている物 (g)</span><input data-lift="attachedG" type="number" min="0" step="1" inputmode="decimal"></label>
                         <label class="field"><span>体重計の目盛り (kg)</span><input data-lift="resolutionKg" type="number" min="0.01" step="0.01" inputmode="decimal"></label>
-                        <p class="note">「一緒に持っている物」は口を縛った紐・締結具など、気球と一緒に持ち上げているもの（ペイロードは含めない）。総重量は「① ボンベ」の機体条件から計算します。</p>
+                        <p class="note">「一緒に持っている物」は、ホースのうち手で持ち上げている分など、気球と一緒に持っているもの（ペイロードは含めない）。わからなければ 0 のままで構いません（その分 ±5% 判定がやや厳しくなります）。総重量は「① ボンベ」の機体条件から計算します。</p>
                         <div id="fc_lift_result" class="lift-result" aria-live="polite"></div>
                         <div class="lift-record"><button type="button" id="fc_lift_record" class="btn btn-big">この測定を記録に残す</button></div>
                         <div id="fc_topup" class="topup" aria-live="polite"></div>
