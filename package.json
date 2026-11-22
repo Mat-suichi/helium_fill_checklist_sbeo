@@ -1,0 +1,9 @@
+{
+  "name": "helium-fill-checklist",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ヘリウム充填チェックシート（目標一次圧の計算・体重計による浮力測定）",
+  "scripts": {
+    "test": "node --test tests/"
+  }
+}

@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ja">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#161c23">
+    <meta name="description" content="ヘリウム充填の手順チェック、ボンベごとの目標一次圧、体重計による浮力測定">
+    <title>Helium Fill Checklist — ヘリウム充填チェックシート</title>
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="充填チェック">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" href="icons/icon-192.png" type="image/png">
+    <link rel="apple-touch-icon" href="icons/icon-180.png">
+    <link rel="stylesheet" href="css/fill-checklist.css">
+    <script src="js/calc/balloon-gas.js"></script>
+    <script src="js/fill/fill-checklist-core.js"></script>
+    <script src="js/fill/fill-checklist-ui.js" defer></script>
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <span class="brand-mark" aria-hidden="true">◎</span>
+            <span class="brand-name">Helium Fill Checklist</span>
+            <span class="brand-sub">ヘリウム充填チェックシート</span>
+        </div>
+        <div class="topbar-status" id="fc_chips" role="status" aria-live="polite"></div>
+        <div class="topbar-actions">
+            <button type="button" id="fc_speak" class="btn" aria-pressed="false" title="次の手順を音声で読み上げる">🔈 読み上げ</button>
+            <button type="button" id="fc_copy_log" class="btn" title="記録をテキストでクリップボードにコピー">記録をコピー</button>
+            <button type="button" id="fc_download_log" class="btn" title="記録を CSV ファイルで保存">CSV</button>
+            <button type="button" id="fc_reset" class="btn btn-danger" title="チェックと記録を消して1本目からやり直す（設定は残ります）">やり直す</button>
+        </div>
+    </header>
+
+    <nav class="rail" aria-label="パネル">
+        <button type="button" class="rail-btn active" data-tab="check" title="充填手順のチェック"><span class="rail-icon">✓</span><span>チェック</span></button>
+        <button type="button" class="rail-btn" data-tab="gas" title="必要ガス量とボンベ計画"><span class="rail-icon">◯</span><span>ボンベ</span></button>
+        <button type="button" class="rail-btn" data-tab="lift" title="体重計による浮力測定"><span class="rail-icon">⚖</span><span>浮力</span></button>
+        <button type="button" class="rail-btn" data-tab="log" title="記録"><span class="rail-icon">☰</span><span>記録</span></button>
+    </nav>
+
+    <main class="stage">
+        <div class="stage-grid">
+            <aside id="fc_status" class="status-card" aria-live="polite" aria-label="現在のボンベ">
+                <div class="status-head">
+                    <span id="fc_status_cyl" class="status-cyl">1本目</span>
+                    <span id="fc_status_total" class="status-total"></span>
+                </div>
+                <div class="status-target">
+                    <span class="status-label" id="fc_status_target_label">目標一次圧</span>
+                    <strong id="fc_status_target">-</strong>
+                    <small id="fc_status_target_note"></small>
+                </div>
+                <div class="status-progress" role="img" id="fc_progress_label">
+                    <div class="progress-bar"><span id="fc_progress_done"></span><span id="fc_progress_now"></span></div>
+                    <p id="fc_progress_text"></p>
+                </div>
+                <p id="fc_status_next" class="status-next"></p>
+            </aside>
+
+            <div class="panels">
+                <section id="fc_tab_check" class="panel">
+                    <h2>充填チェック</h2>
+                    <div id="fc_setup"></div>
+                    <div id="fc_focus" class="focus-card" aria-live="polite" hidden></div>
+                    <details id="fc_list" class="step-list" hidden>
+                        <summary>全手順の一覧（ここからもチェック・取り消しできます）</summary>
+                        <div id="fc_steps"></div>
+                    </details>
+                    <div class="panel-actions" id="fc_check_actions" hidden>
+                        <button type="button" id="fc_prev_cyl" class="btn">前のボンベに戻る</button>
+                        <button type="button" id="fc_finish" class="btn">充填を終了</button>
+                        <button type="button" id="fc_next_cyl" class="btn btn-primary">▶ 次のボンベへ</button>
+                    </div>
+                </section>
+
+                <section id="fc_tab_gas" class="panel" hidden>
+                    <h2>必要ガス量とボンベ</h2>
+                    <p id="fc_error" class="note error" hidden></p>
+                    <h3>ボンベ計画</h3>
+                    <div class="card table-card">
+                        <table class="grid">
+                            <thead><tr><th>本</th><th>初期圧 MPa</th><th>目標終了 MPa</th><th>実測終了 MPa</th><th>使用量</th></tr></thead>
+                            <tbody id="fc_plan_body"></tbody>
+                        </table>
+                    </div>
+                    <div class="card"><dl class="kv fc-summary" id="fc_summary"></dl></div>
+
+                    <form id="fc_settings" class="settings">
+                        <h3>必要ガス量</h3>
+                        <button type="button" id="fc_import" class="btn btn-small">予測ツールのガス計算設定を読み込む</button>
+                        <label class="field"><span>求め方</span><select name="requiredMode"><option value="calc">機体条件から計算</option><option value="manual">直接入力</option></select></label>
+                        <div data-mode="manual"><label class="field"><span>必要ガス量 (L)</span><input name="manualRequiredL" type="number" min="1" step="1" inputmode="decimal"></label></div>
+                        <div data-mode="calc">
+                            <label class="field"><span>入力モード</span><select name="gas.inputMode"><option value="normal">通常</option><option value="verification">気球以外の総重量を直接入力</option></select></label>
+                            <label class="field"><span>気球質量</span><select name="gas.balloonMassG"><option value="1000">1000 g</option><option value="1500">1500 g</option><option value="2000">2000 g</option><option value="3000">3000 g</option></select></label>
+                            <div data-input-mode="normal">
+                                <label class="field"><span>コンポーネント (g)</span><input name="gas.componentMassG" type="number" min="0" step="1" inputmode="decimal"></label>
+                                <label class="field"><span>その他 (g)</span><input name="gas.otherMassG" type="number" min="0" step="1" inputmode="decimal"></label>
+                                <label class="field"><span>パラシュート (g)</span><input name="gas.parachuteMassG" type="number" min="0" step="1" inputmode="decimal"></label>
+                                <label class="field"><span>ガーミン等 (g)</span><input name="gas.recoveryEquipmentMassG" type="number" min="0" step="1" inputmode="decimal"></label>
+                            </div>
+                            <div data-input-mode="verification">
+                                <label class="field"><span>気球以外の総重量 (g)</span><input name="gas.verificationOtherMassG" type="number" min="0" step="1" inputmode="decimal"></label>
+                            </div>
+                            <label class="field"><span>目標上昇速度 (m/s)</span><input name="gas.targetAscentRate" type="number" min="0.1" step="0.1" inputmode="decimal"></label>
+                            <label class="field"><span>充填時温度 (℃)</span><input name="gas.temperatureC" type="number" step="0.1" inputmode="decimal"></label>
+                            <label class="field"><span>充填時気圧 (hPa)</span><input name="gas.pressureHpa" type="number" min="1" step="0.1" inputmode="decimal"></label>
+                            <label class="field"><span>空気−He 密度差</span><select name="gas.densityDifferenceKgM3"><option value="1.1138">1.1138 kg/m³（Python 2026）</option><option value="1.115">1.115 kg/m³（元Excel）</option></select></label>
+                        </div>
+
+                        <h3>ボンベ</h3>
+                        <label class="field"><span>本数</span><select name="cylinderCount"></select></label>
+                        <div class="cyl-grid cyl-head"><span>本</span><span>容積 (L)</span><span>予定初期圧 (MPa)</span></div>
+                        <div id="fc_cyl_inputs"></div>
+                        <p class="note">実際の初期圧は、チェックの「一次圧を確認して入力する」で入れた値が優先されます。</p>
+                        <label class="field"><span>終了目標残圧 (MPa)</span><input name="gas.targetCylinderPressureMpa" type="number" min="0.01" step="0.01" inputmode="decimal"></label>
+                        <label class="field"><span>1本目オフセット (MPa)</span><input name="gas.firstCylinderOffsetMpa" type="number" min="0" step="0.01" inputmode="decimal"></label>
+                        <label class="field"><span>残圧測定時温度 (℃)</span><input name="gas.cylinderTemperatureC" type="number" step="0.1" inputmode="decimal"></label>
+                        <label class="field"><span>ボンベ充填過程</span><select name="gas.cylinderProcess"><option value="adiabatic">断熱（既定）</option><option value="polytropic">ポリトロープ</option><option value="quasi-static">準静的</option></select></label>
+                        <label class="field"><span>ポリトロープ指数 n</span><input name="gas.polytropicN" type="number" min="1" max="1.67" step="0.01" inputmode="decimal"></label>
+                    </form>
+                </section>
+
+                <section id="fc_tab_lift" class="panel" hidden>
+                    <h2>浮力測定（体重計）</h2>
+                    <div id="fc_lift">
+                        <p class="note">充填が終わりバルーンの口を縛ったあと、同じ体重計・同じ人で続けて測ります。風を避け、気球は真上に引かせてください。</p>
+                        <div class="card"><p id="fc_lift_target" class="lift-target"></p></div>
+                        <label class="field field-big"><span>① 保持者の体重 (kg)</span><input data-lift="holderKg" type="number" min="0" step="0.05" inputmode="decimal"></label>
+                        <label class="field field-big"><span>② 気球を持った状態 (kg)</span><input data-lift="withKg" type="number" min="0" step="0.05" inputmode="decimal"></label>
+                        <label class="field"><span>一緒に持っている物 (g)</span><input data-lift="attachedG" type="number" min="0" step="1" inputmode="decimal"></label>
+                        <label class="field"><span>体重計の目盛り (kg)</span><input data-lift="resolutionKg" type="number" min="0.01" step="0.01" inputmode="decimal"></label>
+                        <p class="note">「一緒に持っている物」は口を縛った紐・締結具など、気球と一緒に持ち上げているもの（ペイロードは含めない）。総重量は「ボンベ」パネルの機体条件から計算します。</p>
+                        <div id="fc_lift_result" class="lift-result" aria-live="polite"></div>
+                        <div class="panel-actions">
+                            <button type="button" id="fc_lift_record" class="btn btn-primary">この測定を記録に残す</button>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="fc_tab_log" class="panel" hidden>
+                    <h2>記録</h2>
+                    <p class="note">チェック・入力した値・浮力測定が時刻付きで残ります。上部の「記録をコピー」「CSV」で書き出せます。</p>
+                    <ol id="fc_log" class="log" reversed></ol>
+                </section>
+            </div>
+        </div>
+    </main>
+    <div id="fc_toast" class="toast" role="status" hidden></div>
+</body>
+</html>

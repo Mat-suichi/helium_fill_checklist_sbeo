@@ -1,0 +1,17 @@
+{
+    "name": "ヘリウム充填チェックシート",
+    "short_name": "充填チェック",
+    "description": "ヘリウム充填の手順チェック、ボンベごとの目標一次圧、体重計による浮力測定",
+    "lang": "ja",
+    "start_url": "./index.html",
+    "scope": "./",
+    "display": "standalone",
+    "orientation": "any",
+    "background_color": "#0e1217",
+    "theme_color": "#161c23",
+    "icons": [
+        { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+        { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+        { "src": "icons/icon-180.png", "sizes": "180x180", "type": "image/png" }
+    ]
+}
